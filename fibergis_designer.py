@@ -31,6 +31,19 @@ from .resources import *
 from .fibergis_designer_dialog import FiberGISDesignerDialog
 import os.path
 
+from qgis.PyQt.QtWidgets import QMessageBox
+from qgis.core import (
+    QgsProject,
+    QgsVectorLayer,
+    QgsFeature,
+    QgsGeometry,
+    QgsPointXY,
+    QgsField,
+    QgsWkbTypes
+)
+from PyQt5.QtCore import QVariant
+
+
 
 class FiberGISDesigner:
     """QGIS Plugin Implementation."""
@@ -195,6 +208,81 @@ class FiberGISDesigner:
         result = self.dlg.exec_()
         # See if OK was pressed
         if result:
-            # Do something useful here - delete the line containing pass and
-            # substitute with your code.
-            pass
+            self.create_demo_telecom_design()
+    
+    def create_demo_telecom_design(self):
+        """Create a demo telecom design with nodes and a cable line."""
+
+        project = QgsProject.instance()
+
+        # 1. Create telecom node layer
+        node_layer = QgsVectorLayer(
+            "Point?crs=EPSG:4326",
+            "通信节点_demo",
+            "memory"
+        )
+        node_provider = node_layer.dataProvider()
+        node_provider.addAttributes([
+            QgsField("name", QVariant.String),
+            QgsField("type", QVariant.String),
+            QgsField("status", QVariant.String)
+        ])
+        node_layer.updateFields()
+
+        # 2. Create two demo nodes
+        node_a = QgsFeature(node_layer.fields())
+        node_a.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(114.3000, 30.6000)))
+        node_a.setAttributes(["A机房", "机房", "新建"])
+
+        node_b = QgsFeature(node_layer.fields())
+        node_b.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(114.3100, 30.6050)))
+        node_b.setAttributes(["B基站", "基站", "新建"])
+
+        node_provider.addFeatures([node_a, node_b])
+        node_layer.updateExtents()
+        project.addMapLayer(node_layer)
+
+        # 3. Create telecom cable line layer
+        line_layer = QgsVectorLayer(
+            "LineString?crs=EPSG:4326",
+            "通信线路_demo",
+            "memory"
+        )
+        line_provider = line_layer.dataProvider()
+        line_provider.addAttributes([
+            QgsField("name", QVariant.String),
+            QgsField("cable_type", QVariant.String),
+            QgsField("start_node", QVariant.String),
+            QgsField("end_node", QVariant.String),
+            QgsField("length_deg", QVariant.Double)
+        ])
+        line_layer.updateFields()
+
+        # 4. Create demo cable line
+        start_point = QgsPointXY(114.3000, 30.6000)
+        end_point = QgsPointXY(114.3100, 30.6050)
+        line_geom = QgsGeometry.fromPolylineXY([start_point, end_point])
+
+        line_feature = QgsFeature(line_layer.fields())
+        line_feature.setGeometry(line_geom)
+        line_feature.setAttributes([
+            "A机房-B基站光缆",
+            "48芯光缆",
+            "A机房",
+            "B基站",
+            line_geom.length()
+        ])
+
+        line_provider.addFeature(line_feature)
+        line_layer.updateExtents()
+        project.addMapLayer(line_layer)
+
+        # 5. Zoom to created layers
+        self.iface.mapCanvas().setExtent(line_layer.extent())
+        self.iface.mapCanvas().refresh()
+
+        QMessageBox.information(
+            self.iface.mainWindow(),
+            "FiberGIS Designer",
+            "已生成示例通信线路：A机房 → B基站"
+        )
