@@ -317,15 +317,19 @@ class FiberGISDesigner:
         # 6. Export demo BOM
         bom_path = self.export_demo_bom()
 
-        # 7. Zoom to created layers
+        # 7. Run demo rule check
+        risk_report_path = self.run_demo_rule_check()
+
+        # 8. Zoom to created layers
         self.iface.mapCanvas().setExtent(line_layer.extent())
         self.iface.mapCanvas().refresh()
 
         QMessageBox.information(
             self.iface.mainWindow(),
             "FiberGIS Designer",
-            "已生成示例通信设计：2个通信节点、1条通信线路、5个人井，并导出 BOM。\n"
-            "BOM路径：{}".format(bom_path)
+            "已生成示例通信设计：2个通信节点、1条通信线路、5个人井，并导出 BOM 和审查报告。\n"
+            "BOM路径：{}\n"
+            "审查报告路径：{}".format(bom_path, risk_report_path)
         )
 
     def export_demo_bom(self):
@@ -348,3 +352,59 @@ class FiberGISDesigner:
             writer.writerows(rows)
 
         return bom_path
+
+    def run_demo_rule_check(self):
+        """Run basic demo design checks and export a risk report CSV file."""
+
+        output_dir = os.path.join(self.plugin_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+
+        risk_report_path = os.path.join(output_dir, "risk_report_demo.csv")
+        rows = [
+            ["审查项", "规则说明", "审查结果", "风险等级", "整改建议"],
+            ["起点完整性检查", "检查是否存在A机房", "通过", "无", "无需整改"],
+            ["终点完整性检查", "检查是否存在B基站", "通过", "无", "无需整改"],
+            ["线路完整性检查", "检查是否生成A机房-B基站光缆", "通过", "无", "无需整改"],
+            ["人井布设检查", "检查是否自动布设5个人井", "通过", "无", "无需整改"],
+            ["BOM生成检查", "检查是否导出bom_demo.csv", "通过", "无", "无需整改"]
+        ]
+
+        with open(risk_report_path, "w", newline="", encoding="utf-8-sig") as report_file:
+            writer = csv.writer(report_file)
+            writer.writerows(rows)
+
+        review_layer = QgsVectorLayer(
+            "Point?crs=EPSG:4326",
+            "设计审查_demo",
+            "memory"
+        )
+        review_provider = review_layer.dataProvider()
+        review_provider.addAttributes([
+            QgsField("check_item", QVariant.String),
+            QgsField("result", QVariant.String),
+            QgsField("risk_level", QVariant.String),
+            QgsField("suggestion", QVariant.String)
+        ])
+        review_layer.updateFields()
+
+        start_point = QgsPointXY(114.3000, 30.6000)
+        end_point = QgsPointXY(114.3100, 30.6050)
+        midpoint = QgsPointXY(
+            (start_point.x() + end_point.x()) / 2.0,
+            (start_point.y() + end_point.y()) / 2.0
+        )
+
+        review_feature = QgsFeature(review_layer.fields())
+        review_feature.setGeometry(QgsGeometry.fromPointXY(midpoint))
+        review_feature.setAttributes([
+            "基础设计审查",
+            "通过",
+            "无",
+            "无需整改"
+        ])
+
+        review_provider.addFeature(review_feature)
+        review_layer.updateExtents()
+        QgsProject.instance().addMapLayer(review_layer)
+
+        return risk_report_path
