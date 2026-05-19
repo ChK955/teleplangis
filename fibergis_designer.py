@@ -277,12 +277,48 @@ class FiberGISDesigner:
         line_layer.updateExtents()
         project.addMapLayer(line_layer)
 
-        # 5. Zoom to created layers
+        # 5. Create telecom facility layer and manholes along the demo cable line
+        facility_layer = QgsVectorLayer(
+            "Point?crs=EPSG:4326",
+            "通信设施_demo",
+            "memory"
+        )
+        facility_provider = facility_layer.dataProvider()
+        facility_provider.addAttributes([
+            QgsField("name", QVariant.String),
+            QgsField("facility_type", QVariant.String),
+            QgsField("line_name", QVariant.String),
+            QgsField("seq", QVariant.Int)
+        ])
+        facility_layer.updateFields()
+
+        manhole_features = []
+        line_name = "A机房-B基站光缆"
+        for seq in range(1, 6):
+            ratio = seq / 6.0
+            x = start_point.x() + (end_point.x() - start_point.x()) * ratio
+            y = start_point.y() + (end_point.y() - start_point.y()) * ratio
+
+            manhole_feature = QgsFeature(facility_layer.fields())
+            manhole_feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)))
+            manhole_feature.setAttributes([
+                "{}号人井".format(seq),
+                "人井",
+                line_name,
+                seq
+            ])
+            manhole_features.append(manhole_feature)
+
+        facility_provider.addFeatures(manhole_features)
+        facility_layer.updateExtents()
+        project.addMapLayer(facility_layer)
+
+        # 6. Zoom to created layers
         self.iface.mapCanvas().setExtent(line_layer.extent())
         self.iface.mapCanvas().refresh()
 
         QMessageBox.information(
             self.iface.mainWindow(),
             "FiberGIS Designer",
-            "已生成示例通信线路：A机房 → B基站"
+            "已生成示例通信设计：2个通信节点、1条通信线路、5个人井。"
         )
