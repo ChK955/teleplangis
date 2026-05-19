@@ -40,6 +40,8 @@ from qgis.core import (
     QgsGeometry,
     QgsPointXY,
     QgsField,
+    QgsDistanceArea,
+    QgsCoordinateReferenceSystem,
     QgsWkbTypes
 )
 from PyQt5.QtCore import QVariant
@@ -212,7 +214,7 @@ class FiberGISDesigner:
             start_name = self.dlg.startNameLineEdit.text().strip() or "A机房"
             end_name = self.dlg.endNameLineEdit.text().strip() or "B基站"
             cable_type = self.dlg.cableTypeLineEdit.text().strip() or "48芯光缆"
-            manhole_count = self.dlg.manholeCountSpinBox.value()
+            manhole_count = max(0, self.dlg.manholeCountSpinBox.value())
 
             self.create_demo_telecom_design(
                 start_name,
@@ -277,7 +279,8 @@ class FiberGISDesigner:
             QgsField("cable_type", QVariant.String),
             QgsField("start_node", QVariant.String),
             QgsField("end_node", QVariant.String),
-            QgsField("length_deg", QVariant.Double)
+            QgsField("length_deg", QVariant.Double),
+            QgsField("length_m", QVariant.Double)
         ])
         line_layer.updateFields()
 
@@ -285,6 +288,13 @@ class FiberGISDesigner:
         start_point = QgsPointXY(114.3000, 30.6000)
         end_point = QgsPointXY(114.3100, 30.6050)
         line_geom = QgsGeometry.fromPolylineXY([start_point, end_point])
+        distance_area = QgsDistanceArea()
+        distance_area.setSourceCrs(
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            project.transformContext()
+        )
+        distance_area.setEllipsoid("WGS84")
+        length_m = round(distance_area.measureLine(start_point, end_point), 2)
 
         line_feature = QgsFeature(line_layer.fields())
         line_feature.setGeometry(line_geom)
@@ -293,7 +303,8 @@ class FiberGISDesigner:
             cable_type,
             start_name,
             end_name,
-            line_geom.length()
+            line_geom.length(),
+            length_m
         ])
 
         line_provider.addFeature(line_feature)
@@ -342,15 +353,15 @@ class FiberGISDesigner:
             end_name,
             cable_type,
             manhole_count,
-            line_name
+            length_m
         )
 
         # 7. Run demo rule check
         risk_report_path = self.run_demo_rule_check(
             start_name,
             end_name,
-            line_name,
-            manhole_count
+            manhole_count,
+            bom_path
         )
 
         # 8. Zoom to created layers
@@ -360,9 +371,22 @@ class FiberGISDesigner:
         QMessageBox.information(
             self.iface.mainWindow(),
             "FiberGIS Designer",
-            "已生成示例通信设计：2个通信节点、1条通信线路、{}个人井，并导出 BOM 和审查报告。\n"
+            "已生成示例通信设计：\n"
+            "起点：{}\n"
+            "终点：{}\n"
+            "光缆型号：{}\n"
+            "线路长度：{} 米\n"
+            "人井数量：{}\n"
             "BOM路径：{}\n"
-            "审查报告路径：{}".format(manhole_count, bom_path, risk_report_path)
+            "审查报告路径：{}".format(
+                start_name,
+                end_name,
+                cable_type,
+                length_m,
+                manhole_count,
+                bom_path,
+                risk_report_path
+            )
         )
 
     def export_demo_bom(
@@ -371,7 +395,7 @@ class FiberGISDesigner:
         end_name="B基站",
         cable_type="48芯光缆",
         manhole_count=5,
-        line_name=None
+        length_m=0
     ):
         """Export a demo BOM CSV file for the generated telecom design."""
 
@@ -379,7 +403,8 @@ class FiberGISDesigner:
         end_name = end_name.strip() or "B基站"
         cable_type = cable_type.strip() or "48芯光缆"
         manhole_count = max(0, int(manhole_count))
-        line_name = line_name or "{}-{}光缆".format(start_name, end_name)
+        length_m = round(float(length_m), 2)
+        line_name = "{}-{}光缆".format(start_name, end_name)
 
         output_dir = os.path.join(self.plugin_dir, "output")
         os.makedirs(output_dir, exist_ok=True)
@@ -387,7 +412,7 @@ class FiberGISDesigner:
         bom_path = os.path.join(output_dir, "bom_demo.csv")
         rows = [
             ["物料名称", "规格型号", "单位", "数量", "计算依据"],
-            ["光缆", cable_type, "段", 1, line_name],
+            ["光缆", cable_type, "米", length_m, "{}长度自动计算".format(line_name)],
             ["通信节点", "机房", "个", 1, start_name],
             ["通信节点", "基站", "个", 1, end_name],
             ["人井", "标准人井", "个", manhole_count, "沿线路自动布设"]
@@ -403,15 +428,16 @@ class FiberGISDesigner:
         self,
         start_name="A机房",
         end_name="B基站",
-        line_name=None,
-        manhole_count=5
+        manhole_count=5,
+        bom_path=None
     ):
         """Run basic demo design checks and export a risk report CSV file."""
 
         start_name = start_name.strip() or "A机房"
         end_name = end_name.strip() or "B基站"
         manhole_count = max(0, int(manhole_count))
-        line_name = line_name or "{}-{}光缆".format(start_name, end_name)
+        line_name = "{}-{}光缆".format(start_name, end_name)
+        bom_file_name = os.path.basename(bom_path) if bom_path else "bom_demo.csv"
 
         output_dir = os.path.join(self.plugin_dir, "output")
         os.makedirs(output_dir, exist_ok=True)
@@ -424,12 +450,12 @@ class FiberGISDesigner:
             ["线路完整性检查", "检查是否生成{}".format(line_name), "通过", "无", "无需整改"],
             [
                 "人井布设检查",
-                "检查是否自动布设{}个人井".format(manhole_count),
-                "通过，已布设{}个人井".format(manhole_count),
+                "检查是否自动布设 {} 个人井".format(manhole_count),
+                "通过",
                 "无",
                 "无需整改"
             ],
-            ["BOM生成检查", "检查是否导出bom_demo.csv", "通过", "无", "无需整改"]
+            ["BOM生成检查", "检查是否导出 {}".format(bom_file_name), "通过", "无", "无需整改"]
         ]
 
         with open(risk_report_path, "w", newline="", encoding="utf-8-sig") as report_file:
