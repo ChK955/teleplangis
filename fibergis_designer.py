@@ -30,6 +30,7 @@ from .resources import *
 # Import the code for the dialog
 from .fibergis_designer_dialog import FiberGISDesignerDialog
 import os.path
+import csv
 
 from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.core import (
@@ -313,12 +314,37 @@ class FiberGISDesigner:
         facility_layer.updateExtents()
         project.addMapLayer(facility_layer)
 
-        # 6. Zoom to created layers
+        # 6. Export demo BOM
+        bom_path = self.export_demo_bom()
+
+        # 7. Zoom to created layers
         self.iface.mapCanvas().setExtent(line_layer.extent())
         self.iface.mapCanvas().refresh()
 
         QMessageBox.information(
             self.iface.mainWindow(),
             "FiberGIS Designer",
-            "已生成示例通信设计：2个通信节点、1条通信线路、5个人井。"
+            "已生成示例通信设计：2个通信节点、1条通信线路、5个人井，并导出 BOM。\n"
+            "BOM路径：{}".format(bom_path)
         )
+
+    def export_demo_bom(self):
+        """Export a demo BOM CSV file for the generated telecom design."""
+
+        output_dir = os.path.join(self.plugin_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+
+        bom_path = os.path.join(output_dir, "bom_demo.csv")
+        rows = [
+            ["物料名称", "规格型号", "单位", "数量", "计算依据"],
+            ["光缆", "48芯光缆", "段", 1, "A机房-B基站光缆"],
+            ["通信节点", "机房", "个", 1, "A机房"],
+            ["通信节点", "基站", "个", 1, "B基站"],
+            ["人井", "标准人井", "个", 5, "沿线路自动布设"]
+        ]
+
+        with open(bom_path, "w", newline="", encoding="utf-8-sig") as bom_file:
+            writer = csv.writer(bom_file)
+            writer.writerows(rows)
+
+        return bom_path
