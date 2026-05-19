@@ -1,33 +1,98 @@
-<ui version="4.0" >
+<ui version="4.0">
  <class>FiberGISDesignerDialogBase</class>
- <widget class="QDialog" name="FiberGISDesignerDialogBase" >
-  <property name="geometry" >
+ <widget class="QDialog" name="FiberGISDesignerDialogBase">
+  <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
-    <height>300</height>
+    <width>420</width>
+    <height>240</height>
    </rect>
   </property>
-  <property name="windowTitle" >
+  <property name="windowTitle">
    <string>FiberGIS Designer</string>
   </property>
-  <widget class="QDialogButtonBox" name="button_box" >
-   <property name="geometry" >
-    <rect>
-     <x>30</x>
-     <y>240</y>
-     <width>341</width>
-     <height>32</height>
-    </rect>
-   </property>
-   <property name="orientation" >
-    <enum>Qt::Horizontal</enum>
-   </property>
-   <property name="standardButtons" >
-    <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
-   </property>
-  </widget>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <layout class="QFormLayout" name="formLayout">
+     <property name="labelAlignment">
+      <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+     </property>
+     <item row="0" column="0">
+      <widget class="QLabel" name="startNameLabel">
+       <property name="text">
+        <string>起点名称</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="startNameLineEdit">
+       <property name="text">
+        <string>A机房</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="endNameLabel">
+       <property name="text">
+        <string>终点名称</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLineEdit" name="endNameLineEdit">
+       <property name="text">
+        <string>B基站</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="cableTypeLabel">
+       <property name="text">
+        <string>光缆型号</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLineEdit" name="cableTypeLineEdit">
+       <property name="text">
+        <string>48芯光缆</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="manholeCountLabel">
+       <property name="text">
+        <string>人井数量</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QSpinBox" name="manholeCountSpinBox">
+       <property name="minimum">
+        <number>0</number>
+       </property>
+       <property name="maximum">
+        <number>999</number>
+       </property>
+       <property name="value">
+        <number>5</number>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="button_box">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
  </widget>
  <resources/>
  <connections>
@@ -37,13 +102,13 @@
    <receiver>FiberGISDesignerDialogBase</receiver>
    <slot>accept()</slot>
    <hints>
-    <hint type="source_label" >
+    <hint type="source_label">
      <x>248</x>
-     <y>254</y>
+     <y>214</y>
     </hint>
-    <hint type="destination_label" >
+    <hint type="destination_label">
      <x>157</x>
-     <y>274</y>
+     <y>234</y>
     </hint>
    </hints>
   </connection>
@@ -53,13 +118,13 @@
    <receiver>FiberGISDesignerDialogBase</receiver>
    <slot>reject()</slot>
    <hints>
-    <hint type="source_label" >
+    <hint type="source_label">
      <x>316</x>
-     <y>260</y>
+     <y>220</y>
     </hint>
-    <hint type="destination_label" >
+    <hint type="destination_label">
      <x>286</x>
-     <y>274</y>
+     <y>234</y>
     </hint>
    </hints>
   </connection>
