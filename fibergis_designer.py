@@ -31,7 +31,16 @@ from .resources import *
 from .fibergis_designer_dialog import FiberGISDesignerDialog
 import os.path
 import csv
+import json
+import re
+from datetime import datetime
 
+try:
+    import requests
+except ImportError:
+    requests = None
+
+from qgis.PyQt import QtWidgets
 from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.core import (
     QgsProject,
@@ -78,6 +87,8 @@ class FiberGISDesigner:
         # Declare instance attributes
         self.actions = []
         self.menu = self.tr(u'&FiberGIS Designer')
+        self.ai_configs_path = os.path.join(self.plugin_dir, "ai_configs.json")
+        self.ai_configs = self.load_ai_configs()
 
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
@@ -204,7 +215,12 @@ class FiberGISDesigner:
         if self.first_start == True:
             self.first_start = False
             self.dlg = FiberGISDesignerDialog()
+            self.dlg.aiSettingsButton.setAutoDefault(False)
+            self.dlg.aiSettingsButton.setDefault(False)
+            self.dlg.aiSettingsButton.clicked.connect(self.open_ai_settings_dialog)
 
+        self.ai_configs = self.load_ai_configs()
+        self.refresh_ai_provider_combo()
         # show the dialog
         self.dlg.show()
         # Run the dialog event loop
@@ -215,12 +231,16 @@ class FiberGISDesigner:
             end_name = self.dlg.endNameLineEdit.text().strip() or "B基站"
             cable_type = self.dlg.cableTypeLineEdit.text().strip() or "48芯光缆"
             manhole_count = max(0, self.dlg.manholeCountSpinBox.value())
+            generation_mode = "ai" if self.dlg.aiModeRadioButton.isChecked() else "traditional"
+            ai_config = self.get_selected_ai_config() if generation_mode == "ai" else None
 
             self.create_demo_telecom_design(
                 start_name,
                 end_name,
                 cable_type,
-                manhole_count
+                manhole_count,
+                generation_mode,
+                ai_config
             )
     
     def create_demo_telecom_design(
@@ -228,7 +248,9 @@ class FiberGISDesigner:
         start_name="A机房",
         end_name="B基站",
         cable_type="48芯光缆",
-        manhole_count=5
+        manhole_count=5,
+        generation_mode="traditional",
+        ai_config=None
     ):
         """Create a demo telecom design with nodes and a cable line."""
 
@@ -237,8 +259,53 @@ class FiberGISDesigner:
         cable_type = cable_type.strip() or "48芯光缆"
         manhole_count = max(0, int(manhole_count))
         line_name = "{}-{}光缆".format(start_name, end_name)
+        generation_mode = "ai" if generation_mode == "ai" else "traditional"
+        mode_label = "AI模式（智能规划）" if generation_mode == "ai" else "传统模式（直线生成）"
 
         project = QgsProject.instance()
+        start_point = QgsPointXY(114.3000, 30.6000)
+        end_point = QgsPointXY(114.3100, 30.6050)
+        route_points = [start_point, end_point]
+        ai_provider_name = "未使用"
+        ai_model_name = "未使用"
+        ai_status = "传统直线生成"
+
+        if generation_mode == "ai":
+            ai_provider_name = ai_config.get("name", "未配置") if ai_config else "未配置"
+            ai_model_name = ai_config.get("model", "未配置") if ai_config else "未配置"
+            try:
+                route_points, ai_status = self.get_ai_route_points(
+                    start_name,
+                    end_name,
+                    cable_type,
+                    manhole_count,
+                    start_point,
+                    end_point,
+                    ai_config
+                )
+            except Exception as error:
+                ai_status = "AI调用失败，已回退传统直线。"
+                error_message = "AI线路生成失败：{}".format(error)
+                error_log_path = self.write_ai_error_log(
+                    error_message,
+                    {
+                        "platform": ai_provider_name,
+                        "model": ai_model_name,
+                        "url": self.build_ai_url(
+                            ai_config.get("base_url", "") if ai_config else "",
+                            ai_config.get("endpoint", "") if ai_config else ""
+                        ),
+                        "exception": repr(error)
+                    }
+                )
+                QMessageBox.warning(
+                    self.iface.mainWindow(),
+                    "FiberGIS Designer",
+                    "{}\n已回退传统直线生成。\n错误日志：{}".format(
+                        error_message,
+                        error_log_path
+                    )
+                )
 
         # 1. Create telecom node layer
         node_layer = QgsVectorLayer(
@@ -285,16 +352,8 @@ class FiberGISDesigner:
         line_layer.updateFields()
 
         # 4. Create demo cable line
-        start_point = QgsPointXY(114.3000, 30.6000)
-        end_point = QgsPointXY(114.3100, 30.6050)
-        line_geom = QgsGeometry.fromPolylineXY([start_point, end_point])
-        distance_area = QgsDistanceArea()
-        distance_area.setSourceCrs(
-            QgsCoordinateReferenceSystem("EPSG:4326"),
-            project.transformContext()
-        )
-        distance_area.setEllipsoid("WGS84")
-        length_m = round(distance_area.measureLine(start_point, end_point), 2)
+        line_geom = QgsGeometry.fromPolylineXY(route_points)
+        length_m = self.calculate_route_length_m(route_points, project)
 
         line_feature = QgsFeature(line_layer.fields())
         line_feature.setGeometry(line_geom)
@@ -329,11 +388,10 @@ class FiberGISDesigner:
         manhole_features = []
         for seq in range(1, manhole_count + 1):
             ratio = seq / (manhole_count + 1.0)
-            x = start_point.x() + (end_point.x() - start_point.x()) * ratio
-            y = start_point.y() + (end_point.y() - start_point.y()) * ratio
+            manhole_point = self.interpolate_point_on_route(route_points, ratio)
 
             manhole_feature = QgsFeature(facility_layer.fields())
-            manhole_feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)))
+            manhole_feature.setGeometry(QgsGeometry.fromPointXY(manhole_point))
             manhole_feature.setAttributes([
                 "{}号人井".format(seq),
                 "人井",
@@ -375,19 +433,783 @@ class FiberGISDesigner:
             "起点：{}\n"
             "终点：{}\n"
             "光缆型号：{}\n"
+            "生成模式：{}\n"
             "线路长度：{} 米\n"
             "人井数量：{}\n"
+            "AI平台：{}\n"
+            "AI模型：{}\n"
+            "AI状态：{}\n"
             "BOM路径：{}\n"
             "审查报告路径：{}".format(
                 start_name,
                 end_name,
                 cable_type,
+                mode_label,
                 length_m,
                 manhole_count,
+                ai_provider_name,
+                ai_model_name,
+                ai_status,
                 bom_path,
                 risk_report_path
             )
         )
+
+    def load_ai_configs(self):
+        """Load AI platform configurations from the local JSON file."""
+
+        if not os.path.exists(self.ai_configs_path):
+            return []
+
+        try:
+            with open(self.ai_configs_path, "r", encoding="utf-8") as config_file:
+                data = json.load(config_file)
+        except (OSError, ValueError):
+            return []
+
+        if isinstance(data, dict):
+            if isinstance(data.get("platforms"), list):
+                configs = data.get("platforms")
+            elif any(key in data for key in ("name", "base_url", "api_key", "model")):
+                configs = [data]
+            else:
+                configs = []
+        else:
+            configs = data
+        if not isinstance(configs, list):
+            return []
+
+        normalized_configs = []
+        for config in configs:
+            if not isinstance(config, dict):
+                continue
+
+            request_json = config.get("request_json", config.get("config_json", {}))
+            if isinstance(request_json, str):
+                try:
+                    request_json = json.loads(request_json) if request_json.strip() else {}
+                except ValueError:
+                    request_json = {}
+            if not isinstance(request_json, dict):
+                request_json = {}
+
+            base_url = config.get("base_url", "").strip()
+            endpoint = config.get("endpoint", "").strip()
+            legacy_request_url = config.get("request_url", "").strip()
+            if not base_url and legacy_request_url:
+                base_url = legacy_request_url
+                endpoint = ""
+
+            normalized_configs.append({
+                "name": config.get("name", config.get("provider_name", "")).strip(),
+                "base_url": base_url,
+                "endpoint": endpoint,
+                "api_key": config.get("api_key", "").strip(),
+                "model": config.get("model", "").strip(),
+                "request_json": request_json
+            })
+
+        return normalized_configs
+
+    def save_ai_configs(self):
+        """Save AI platform configurations to the local JSON file."""
+
+        data = {"platforms": self.ai_configs}
+        with open(self.ai_configs_path, "w", encoding="utf-8") as config_file:
+            json.dump(data, config_file, ensure_ascii=False, indent=2)
+
+        return self.ai_configs_path
+
+    def refresh_ai_provider_combo(self):
+        """Refresh the AI platform combo box in the main plugin dialog."""
+
+        if not hasattr(self, "dlg") or not hasattr(self.dlg, "aiProviderComboBox"):
+            return
+
+        combo_box = self.dlg.aiProviderComboBox
+        combo_box.clear()
+        if not self.ai_configs:
+            combo_box.addItem("未配置AI平台", -1)
+            combo_box.setEnabled(False)
+            return
+
+        combo_box.setEnabled(True)
+        for index, config in enumerate(self.ai_configs):
+            provider_name = config.get("name") or "未命名平台"
+            model = config.get("model") or "未设置模型"
+            combo_box.addItem("{} / {}".format(provider_name, model), index)
+
+    def get_selected_ai_config(self):
+        """Return the AI platform configuration selected in the main dialog."""
+
+        if not hasattr(self, "dlg") or not hasattr(self.dlg, "aiProviderComboBox"):
+            return None
+
+        index = self.dlg.aiProviderComboBox.currentData()
+        if index is None or index < 0 or index >= len(self.ai_configs):
+            return None
+
+        return self.ai_configs[index]
+
+    def open_ai_settings_dialog(self):
+        """Open the AI platform configuration dialog."""
+
+        parent_dialog = self.dlg if hasattr(self, "dlg") and self.dlg is not None else self.iface.mainWindow()
+        if hasattr(self, "dlg") and self.dlg is not None:
+            self.dlg.show()
+
+        dialog = QtWidgets.QDialog(parent_dialog)
+        dialog.setWindowTitle("AI 设置")
+        dialog.resize(760, 480)
+        dialog.setModal(True)
+        dialog.working_ai_configs = [
+            dict(config, request_json=dict(config.get("request_json", {})))
+            for config in self.ai_configs
+        ]
+
+        main_layout = QtWidgets.QHBoxLayout(dialog)
+        left_layout = QtWidgets.QVBoxLayout()
+        right_layout = QtWidgets.QVBoxLayout()
+
+        dialog.providerListWidget = QtWidgets.QListWidget(dialog)
+        left_layout.addWidget(QtWidgets.QLabel("AI 平台", dialog))
+        left_layout.addWidget(dialog.providerListWidget)
+
+        list_button_layout = QtWidgets.QHBoxLayout()
+        dialog.newConfigButton = QtWidgets.QPushButton("新增", dialog)
+        dialog.deleteConfigButton = QtWidgets.QPushButton("删除", dialog)
+        list_button_layout.addWidget(dialog.newConfigButton)
+        list_button_layout.addWidget(dialog.deleteConfigButton)
+        left_layout.addLayout(list_button_layout)
+
+        form_layout = QtWidgets.QFormLayout()
+        dialog.providerNameLineEdit = QtWidgets.QLineEdit(dialog)
+        dialog.officialUrlLineEdit = QtWidgets.QLineEdit(dialog)
+        dialog.apiKeyLineEdit = QtWidgets.QLineEdit(dialog)
+        dialog.apiKeyLineEdit.setEchoMode(QtWidgets.QLineEdit.Password)
+        dialog.requestUrlLineEdit = QtWidgets.QLineEdit(dialog)
+        dialog.modelLineEdit = QtWidgets.QLineEdit(dialog)
+        dialog.configJsonTextEdit = QtWidgets.QTextEdit(dialog)
+        dialog.configJsonTextEdit.setPlaceholderText('例如：{"temperature": 0.2, "max_tokens": 1024, "timeout": 10}')
+
+        form_layout.addRow("平台名称", dialog.providerNameLineEdit)
+        form_layout.addRow("基础 URL", dialog.officialUrlLineEdit)
+        form_layout.addRow("API Key", dialog.apiKeyLineEdit)
+        form_layout.addRow("API 路径", dialog.requestUrlLineEdit)
+        form_layout.addRow("模型名称", dialog.modelLineEdit)
+        form_layout.addRow("请求 JSON", dialog.configJsonTextEdit)
+        right_layout.addLayout(form_layout)
+
+        action_layout = QtWidgets.QHBoxLayout()
+        dialog.saveConfigButton = QtWidgets.QPushButton("保存配置", dialog)
+        dialog.closeConfigButton = QtWidgets.QPushButton("关闭", dialog)
+        action_layout.addStretch()
+        action_layout.addWidget(dialog.saveConfigButton)
+        action_layout.addWidget(dialog.closeConfigButton)
+        right_layout.addLayout(action_layout)
+
+        main_layout.addLayout(left_layout, 1)
+        main_layout.addLayout(right_layout, 2)
+
+        dialog.providerListWidget.currentRowChanged.connect(
+            lambda row: self.fill_ai_settings_form(dialog, row)
+        )
+        dialog.newConfigButton.clicked.connect(lambda: self.new_ai_settings_config(dialog))
+        dialog.deleteConfigButton.clicked.connect(lambda: self.delete_ai_settings_config(dialog))
+        dialog.saveConfigButton.clicked.connect(lambda: self.save_ai_settings_config(dialog))
+        dialog.closeConfigButton.clicked.connect(dialog.accept)
+
+        self.populate_ai_settings_list(dialog)
+        if dialog.working_ai_configs:
+            dialog.providerListWidget.setCurrentRow(0)
+        else:
+            self.clear_ai_settings_form(dialog)
+
+        dialog.exec_()
+        self.ai_configs = self.load_ai_configs()
+        self.refresh_ai_provider_combo()
+        if hasattr(self, "dlg") and self.dlg is not None:
+            self.dlg.show()
+            self.dlg.raise_()
+            self.dlg.activateWindow()
+
+    def populate_ai_settings_list(self, dialog):
+        """Populate the AI settings list widget from the dialog working copy."""
+
+        dialog.providerListWidget.blockSignals(True)
+        dialog.providerListWidget.clear()
+        for config in dialog.working_ai_configs:
+            provider_name = config.get("name") or "未命名平台"
+            model = config.get("model") or "未设置模型"
+            dialog.providerListWidget.addItem("{} / {}".format(provider_name, model))
+        dialog.providerListWidget.blockSignals(False)
+
+    def fill_ai_settings_form(self, dialog, row):
+        """Fill AI settings form controls from a selected config row."""
+
+        if row < 0 or row >= len(dialog.working_ai_configs):
+            self.clear_ai_settings_form(dialog)
+            return
+
+        config = dialog.working_ai_configs[row]
+        dialog.providerNameLineEdit.setText(config.get("name", ""))
+        dialog.officialUrlLineEdit.setText(config.get("base_url", ""))
+        dialog.apiKeyLineEdit.setText(config.get("api_key", ""))
+        dialog.requestUrlLineEdit.setText(config.get("endpoint", ""))
+        dialog.modelLineEdit.setText(config.get("model", ""))
+        dialog.configJsonTextEdit.setPlainText(
+            json.dumps(config.get("request_json", {}), ensure_ascii=False, indent=2)
+        )
+
+    def clear_ai_settings_form(self, dialog):
+        """Clear AI settings form controls."""
+
+        dialog.providerNameLineEdit.clear()
+        dialog.officialUrlLineEdit.clear()
+        dialog.apiKeyLineEdit.clear()
+        dialog.requestUrlLineEdit.clear()
+        dialog.modelLineEdit.clear()
+        dialog.configJsonTextEdit.setPlainText("{}")
+
+    def new_ai_settings_config(self, dialog):
+        """Prepare the AI settings form for a new platform config."""
+
+        dialog.providerListWidget.clearSelection()
+        dialog.providerListWidget.setCurrentRow(-1)
+        self.clear_ai_settings_form(dialog)
+
+    def delete_ai_settings_config(self, dialog):
+        """Delete the selected AI platform config from the working copy."""
+
+        row = dialog.providerListWidget.currentRow()
+        if row < 0 or row >= len(dialog.working_ai_configs):
+            return
+
+        del dialog.working_ai_configs[row]
+        self.ai_configs = dialog.working_ai_configs
+        self.save_ai_configs()
+        self.populate_ai_settings_list(dialog)
+        if dialog.working_ai_configs:
+            dialog.providerListWidget.setCurrentRow(min(row, len(dialog.working_ai_configs) - 1))
+        else:
+            self.clear_ai_settings_form(dialog)
+        self.refresh_ai_provider_combo()
+
+    def save_ai_settings_config(self, dialog):
+        """Save the current AI platform form into the working copy and JSON file."""
+
+        platform_name = dialog.providerNameLineEdit.text().strip()
+        if not platform_name:
+            QMessageBox.warning(dialog, "AI 设置", "请填写平台名称。")
+            return
+
+        request_json_text = dialog.configJsonTextEdit.toPlainText().strip() or "{}"
+        try:
+            request_json = json.loads(request_json_text)
+        except ValueError as error:
+            QMessageBox.warning(dialog, "AI 设置", "请求 JSON 格式不正确：{}".format(error))
+            return
+
+        if not isinstance(request_json, dict):
+            QMessageBox.warning(dialog, "AI 设置", "请求 JSON 必须是一个 JSON 对象。")
+            return
+
+        config = {
+            "name": platform_name,
+            "base_url": dialog.officialUrlLineEdit.text().strip(),
+            "endpoint": dialog.requestUrlLineEdit.text().strip(),
+            "api_key": dialog.apiKeyLineEdit.text().strip(),
+            "model": dialog.modelLineEdit.text().strip(),
+            "request_json": request_json
+        }
+
+        row = dialog.providerListWidget.currentRow()
+        if row < 0 or row >= len(dialog.working_ai_configs):
+            dialog.working_ai_configs.append(config)
+            row = len(dialog.working_ai_configs) - 1
+        else:
+            dialog.working_ai_configs[row] = config
+
+        self.ai_configs = dialog.working_ai_configs
+        self.save_ai_configs()
+        self.populate_ai_settings_list(dialog)
+        dialog.providerListWidget.setCurrentRow(row)
+        self.refresh_ai_provider_combo()
+        QMessageBox.information(dialog, "AI 设置", "AI 配置已保存。")
+
+    def collect_map_constraints(self):
+        """Collect a compact summary of available map layers as AI route constraints."""
+
+        constraints = []
+        for layer in QgsProject.instance().mapLayers().values():
+            if not hasattr(layer, "wkbType"):
+                continue
+            extent = layer.extent()
+            constraints.append({
+                "name": layer.name(),
+                "geometry": QgsWkbTypes.displayString(layer.wkbType()),
+                "feature_count": layer.featureCount() if hasattr(layer, "featureCount") else None,
+                "extent": [
+                    round(extent.xMinimum(), 6),
+                    round(extent.yMinimum(), 6),
+                    round(extent.xMaximum(), 6),
+                    round(extent.yMaximum(), 6)
+                ]
+            })
+
+        return constraints
+
+    def get_output_dir(self):
+        """Return the plugin output directory, creating it when needed."""
+
+        output_dir = os.path.join(self.plugin_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        return output_dir
+
+    def write_ai_error_log(self, message, detail=None):
+        """Append AI failure details to output/ai_error.log."""
+
+        output_dir = self.get_output_dir()
+        log_path = os.path.join(output_dir, "ai_error.log")
+        detail = detail or {}
+        platform_name = detail.get("platform") or detail.get("platform_name") or "未选择平台"
+        url = detail.get("url") or ""
+        status_code = detail.get("status_code")
+        response_text = detail.get("response_text") or ""
+        exception_text = detail.get("exception") or ""
+
+        log_text = (
+            "[{timestamp}]\n"
+            "平台名称：{platform}\n"
+            "URL：{url}\n"
+            "HTTP状态码：{status_code}\n"
+            "错误信息：{message}\n"
+            "响应文本：{response_text}\n"
+            "Python异常：{exception_text}\n\n"
+        ).format(
+            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            platform=platform_name,
+            url=url,
+            status_code=status_code if status_code is not None else "",
+            message=message,
+            response_text=response_text[:2000],
+            exception_text=exception_text
+        )
+
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(log_text)
+
+        return log_path
+
+    def log_ai_error(self, message, platform_config=None):
+        """Backward-compatible wrapper for older AI error logging calls."""
+
+        detail = {"exception": message}
+        if isinstance(platform_config, dict):
+            detail.update({
+                "platform": platform_config.get("name", "未选择平台"),
+                "url": self.build_ai_url(
+                    platform_config.get("base_url", ""),
+                    platform_config.get("endpoint", "")
+                )
+            })
+        return self.write_ai_error_log(message, detail)
+
+    def get_ai_route_points(
+        self,
+        start_name,
+        end_name,
+        cable_type,
+        manhole_count,
+        start_point,
+        end_point,
+        ai_config
+    ):
+        """Call the selected AI platform and return a route point sequence."""
+
+        if not ai_config:
+            raise RuntimeError("未选择有效的 AI 平台配置")
+
+        raw_points = self.call_ai_route_planner(
+            ai_config,
+            start_name,
+            end_name,
+            cable_type,
+            manhole_count
+        )
+        route_points = self.normalize_route_points(raw_points, start_point, end_point)
+        if len(route_points) < 2:
+            raise RuntimeError("AI 返回的有效线路点少于 2 个")
+
+        return route_points, "AI线路生成成功"
+
+    def build_ai_route_messages(
+        self,
+        start_name,
+        end_name,
+        cable_type,
+        manhole_count,
+        start_point,
+        end_point
+    ):
+        """Build DeepSeek-compatible chat messages for AI route planning."""
+
+        user_prompt = (
+            "请根据以下通信设计参数生成智能线路，并严格返回 JSON 对象。\n"
+            "起点名称：{start_name}\n"
+            "终点名称：{end_name}\n"
+            "光缆型号：{cable_type}\n"
+            "人井数量：{manhole_count}\n"
+            "起点坐标：[114.3000, 30.6000]\n"
+            "终点坐标：[114.3100, 30.6050]\n"
+            "返回格式必须为：\n"
+            "{{\n"
+            "  \"points\": [\n"
+            "    [114.3000, 30.6000],\n"
+            "    [114.3030, 30.6020],\n"
+            "    [114.3060, 30.6035],\n"
+            "    [114.3100, 30.6050]\n"
+            "  ],\n"
+            "  \"reason\": \"线路规划理由\",\n"
+            "  \"risk_notes\": [\"风险提示1\", \"风险提示2\"]\n"
+            "}}\n"
+            "points 必须至少包含起点和终点，每个 point 必须是 [lon, lat] 两个数字。"
+            "不要返回 ```json 代码块。"
+        ).format(
+            start_name=start_name,
+            end_name=end_name,
+            cable_type=cable_type,
+            manhole_count=manhole_count
+        )
+
+        return [
+            {
+                "role": "system",
+                "content": "你是通信基建 GIS 智能设计助手，只能输出合法 JSON，不要输出 Markdown，不要输出解释性文字。"
+            },
+            {"role": "user", "content": user_prompt}
+        ]
+
+    def call_ai_route_planner(self, platform_config, start_name, end_name, cable_type, manhole_count):
+        """Call DeepSeek-compatible Chat Completions API and return route points."""
+
+        start_point = QgsPointXY(114.3000, 30.6000)
+        end_point = QgsPointXY(114.3100, 30.6050)
+        messages = self.build_ai_route_messages(
+            start_name,
+            end_name,
+            cable_type,
+            manhole_count,
+            start_point,
+            end_point
+        )
+        response_json = self.call_ai(platform_config, messages)
+        content = self.extract_chat_completion_content(response_json)
+        parsed_content = self.parse_json_from_ai_text(content)
+        if not isinstance(parsed_content, dict):
+            raise RuntimeError("AI返回内容不是合法 JSON 对象。")
+
+        points = parsed_content.get("points")
+        if not self.is_point_list(points):
+            raise RuntimeError("AI返回内容中未找到有效 points 字段。")
+
+        return points
+
+    def call_ai(self, platform_config, messages):
+        """Call DeepSeek/OpenAI-compatible Chat Completions API with requests.post."""
+
+        if requests is None:
+            raise RuntimeError("当前 Python 环境未安装 requests 库")
+
+        if not isinstance(platform_config, dict):
+            raise RuntimeError("AI 平台配置无效")
+
+        platform_name = platform_config.get("name", "DeepSeek") or "DeepSeek"
+        base_url = platform_config.get("base_url", "https://api.deepseek.com").strip()
+        endpoint = platform_config.get("endpoint", "/chat/completions").strip()
+        api_key = platform_config.get("api_key", "").strip()
+        model = platform_config.get("model", "deepseek-chat").strip() or "deepseek-chat"
+        request_json = platform_config.get("request_json", {})
+        if not isinstance(request_json, dict):
+            request_json = {}
+
+        if not base_url:
+            base_url = "https://api.deepseek.com"
+        if not api_key:
+            raise RuntimeError("{} 的 API Key 为空".format(platform_name))
+
+        url = self.build_ai_url(base_url, endpoint)
+        payload_options = dict(request_json)
+        timeout = payload_options.pop("timeout", 10)
+        extra_headers = payload_options.pop("headers", {})
+        body_options = payload_options.pop("body", {})
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False
+        }
+        payload.update(payload_options)
+        if isinstance(body_options, dict):
+            payload.update(body_options)
+        payload.setdefault("temperature", 0.1)
+        payload.setdefault("max_tokens", 1000)
+        payload.setdefault("response_format", {"type": "json_object"})
+
+        headers = {
+            "Authorization": "Bearer {}".format(api_key),
+            "Content-Type": "application/json"
+        }
+        if isinstance(extra_headers, dict):
+            headers.update(extra_headers)
+
+        response = None
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=float(timeout)
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as error:
+            status_code = response.status_code if response is not None else None
+            response_text = response.text if response is not None else ""
+            log_path = self.write_ai_error_log(
+                "{} 请求失败：{}".format(platform_name, error),
+                {
+                    "platform": platform_name,
+                    "url": url,
+                    "status_code": status_code,
+                    "response_text": response_text,
+                    "exception": repr(error)
+                }
+            )
+            raise RuntimeError("{} 请求失败，详见日志：{}".format(platform_name, log_path))
+        except ValueError as error:
+            response_text = response.text if response is not None else ""
+            log_path = self.write_ai_error_log(
+                "{} 返回内容不是有效 JSON".format(platform_name),
+                {
+                    "platform": platform_name,
+                    "url": url,
+                    "status_code": response.status_code if response is not None else None,
+                    "response_text": response_text,
+                    "exception": repr(error)
+                }
+            )
+            raise RuntimeError("{} 返回内容不是有效 JSON，详见日志：{}".format(platform_name, log_path))
+
+    def build_ai_url(self, base_url, endpoint):
+        """Build final AI API URL from base_url and endpoint."""
+
+        base_url = (base_url or "https://api.deepseek.com").strip()
+        endpoint = (endpoint or "/chat/completions").strip()
+        return "{}/{}".format(base_url.rstrip("/"), endpoint.lstrip("/"))
+
+    def build_ai_request_url(self, base_url, endpoint):
+        """Backward-compatible wrapper for AI URL building."""
+
+        return self.build_ai_url(base_url, endpoint)
+
+    def extract_chat_completion_content(self, response_json):
+        """Extract message.content from a Chat Completions response."""
+
+        try:
+            return response_json["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            raise RuntimeError("AI返回内容中未找到 choices[0].message.content。")
+
+    def find_ai_point_sequence(self, data):
+        """Find a route point sequence in common AI response shapes."""
+
+        if isinstance(data, dict):
+            for key in ("points", "route_points", "route", "coordinates", "path", "polyline"):
+                if key in data:
+                    points = self.find_ai_point_sequence(data[key])
+                    if points:
+                        return points
+
+            choices = data.get("choices")
+            if isinstance(choices, list) and choices:
+                message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+                content = message.get("content", "")
+                parsed_content = self.parse_json_from_ai_text(content)
+                if parsed_content is not None:
+                    return self.find_ai_point_sequence(parsed_content)
+
+            for value in data.values():
+                points = self.find_ai_point_sequence(value)
+                if points:
+                    return points
+
+        if isinstance(data, list):
+            if self.is_point_list(data):
+                return data
+            for item in data:
+                points = self.find_ai_point_sequence(item)
+                if points:
+                    return points
+
+        if isinstance(data, str):
+            parsed_text = self.parse_json_from_ai_text(data)
+            if parsed_text is not None:
+                return self.find_ai_point_sequence(parsed_text)
+
+        return []
+
+    def parse_json_from_ai_text(self, text):
+        """Parse JSON from plain text or fenced AI response content."""
+
+        if not text:
+            return None
+
+        try:
+            return json.loads(text)
+        except ValueError:
+            pass
+
+        fence_match = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+        if fence_match:
+            try:
+                return json.loads(fence_match.group(1).strip())
+            except ValueError:
+                pass
+
+        object_start = text.find("{")
+        object_end = text.rfind("}")
+        if object_start >= 0 and object_end > object_start:
+            try:
+                return json.loads(text[object_start:object_end + 1])
+            except ValueError:
+                pass
+
+        array_start = text.find("[")
+        array_end = text.rfind("]")
+        if array_start >= 0 and array_end > array_start:
+            try:
+                return json.loads(text[array_start:array_end + 1])
+            except ValueError:
+                pass
+
+        return None
+
+    def is_point_list(self, data):
+        """Return True when a list appears to contain coordinate points."""
+
+        if not data:
+            return False
+
+        first_item = data[0]
+        if isinstance(first_item, (list, tuple)) and len(first_item) >= 2:
+            return True
+        if isinstance(first_item, dict):
+            return any(key in first_item for key in ("lon", "lng", "x")) and any(
+                key in first_item for key in ("lat", "y")
+            )
+
+        return False
+
+    def normalize_route_points(self, raw_points, start_point, end_point):
+        """Normalize AI route coordinates into a QgsPointXY list."""
+
+        route_points = []
+        for item in raw_points or []:
+            point = None
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                point = self.safe_qgs_point(item[0], item[1])
+            elif isinstance(item, dict):
+                lon = item.get("lon", item.get("lng", item.get("x")))
+                lat = item.get("lat", item.get("y"))
+                point = self.safe_qgs_point(lon, lat)
+            if point:
+                route_points.append(point)
+
+        if len(route_points) < 2:
+            return []
+
+        if self.point_distance_deg(route_points[0], start_point) > 0.000001:
+            route_points.insert(0, start_point)
+        else:
+            route_points[0] = start_point
+
+        if self.point_distance_deg(route_points[-1], end_point) > 0.000001:
+            route_points.append(end_point)
+        else:
+            route_points[-1] = end_point
+
+        return route_points
+
+    def safe_qgs_point(self, lon, lat):
+        """Create a QgsPointXY only when coordinates are numeric and plausible."""
+
+        try:
+            lon = float(lon)
+            lat = float(lat)
+        except (TypeError, ValueError):
+            return None
+
+        if lon < -180 or lon > 180 or lat < -90 or lat > 90:
+            return None
+
+        return QgsPointXY(lon, lat)
+
+    def point_distance_deg(self, point_a, point_b):
+        """Calculate a simple degree-space distance between two points."""
+
+        dx = point_a.x() - point_b.x()
+        dy = point_a.y() - point_b.y()
+        return (dx * dx + dy * dy) ** 0.5
+
+    def calculate_route_length_m(self, route_points, project):
+        """Calculate a WGS84 ellipsoid route length in meters."""
+
+        distance_area = QgsDistanceArea()
+        distance_area.setSourceCrs(
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            project.transformContext()
+        )
+        distance_area.setEllipsoid("WGS84")
+
+        length_m = 0.0
+        for index in range(len(route_points) - 1):
+            length_m += distance_area.measureLine(route_points[index], route_points[index + 1])
+
+        return round(length_m, 2)
+
+    def interpolate_point_on_route(self, route_points, ratio):
+        """Interpolate a point along a route using degree-space segment lengths."""
+
+        if not route_points:
+            return QgsPointXY(114.3000, 30.6000)
+        if len(route_points) == 1:
+            return route_points[0]
+
+        ratio = max(0.0, min(1.0, float(ratio)))
+        segment_lengths = []
+        total_length = 0.0
+        for index in range(len(route_points) - 1):
+            segment_length = self.point_distance_deg(route_points[index], route_points[index + 1])
+            segment_lengths.append(segment_length)
+            total_length += segment_length
+
+        if total_length == 0:
+            return route_points[0]
+
+        target_length = total_length * ratio
+        traversed_length = 0.0
+        for index, segment_length in enumerate(segment_lengths):
+            if traversed_length + segment_length >= target_length:
+                local_ratio = (target_length - traversed_length) / segment_length if segment_length else 0
+                start_point = route_points[index]
+                end_point = route_points[index + 1]
+                x = start_point.x() + (end_point.x() - start_point.x()) * local_ratio
+                y = start_point.y() + (end_point.y() - start_point.y()) * local_ratio
+                return QgsPointXY(x, y)
+            traversed_length += segment_length
+
+        return route_points[-1]
 
     def export_demo_bom(
         self,

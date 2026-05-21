@@ -1,0 +1,18 @@
+{
+  "platforms": [
+    {
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com",
+      "endpoint": "/chat/completions",
+      "api_key": "sk-bf4cd44178f94c8996f091eb383898ae",
+      "model": "deepseek-chat",
+      "request_json": {
+        "temperature": 0.1,
+        "max_tokens": 1000,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    }
+  ]
+}

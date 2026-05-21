@@ -5,8 +5,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>420</width>
-    <height>240</height>
+    <width>520</width>
+    <height>330</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -81,6 +81,57 @@
       </widget>
      </item>
     </layout>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="aiModeGroupBox">
+     <property name="title">
+      <string>线路生成模式</string>
+     </property>
+     <layout class="QVBoxLayout" name="aiModeVerticalLayout">
+      <item>
+       <layout class="QHBoxLayout" name="modeRadioLayout">
+        <item>
+         <widget class="QRadioButton" name="traditionalModeRadioButton">
+          <property name="text">
+           <string>传统模式（直线生成）</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="aiModeRadioButton">
+          <property name="text">
+           <string>AI 模式（智能规划）</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="aiProviderLayout">
+        <item>
+         <widget class="QLabel" name="aiProviderLabel">
+          <property name="text">
+           <string>AI 平台</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="aiProviderComboBox"/>
+        </item>
+        <item>
+         <widget class="QPushButton" name="aiSettingsButton">
+          <property name="text">
+           <string>AI 设置</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
    </item>
    <item>
     <widget class="QDialogButtonBox" name="button_box">
