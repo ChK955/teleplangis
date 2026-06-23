@@ -1,4 +1,4 @@
-# FiberGIS Designer
+# TelePlanGIS
 
 > 面向通信基建工程的 QGIS 智能辅助设计插件
 > QGIS-based Intelligent Design Plugin for Communication Infrastructure Engineering
