@@ -1,32 +1,721 @@
-Plugin Builder Results
+# FiberGIS Designer
 
-Your plugin FiberGISDesigner was created in:
-    C:/Users/Administrator/AppData/Roaming/QGIS/QGIS3/profiles/default/python/plugins\fibergis_designer
+> 面向通信基建工程的 QGIS 智能辅助设计插件
+> QGIS-based Intelligent Design Plugin for Communication Infrastructure Engineering
 
-Your QGIS plugin directory is located at:
-    C:/Users/Administrator/AppData/Roaming/QGIS/QGIS3/profiles/default/python/plugins
+## 项目简介
 
-What's Next:
+FiberGIS Designer 是一个基于 QGIS 的通信基建工程智能辅助设计插件，面向通信线路、机房、基站、人井等工程设计场景，提供参数化设计、自动线路生成、通信设施布设、BOM 自动导出、基础设计审查报告生成以及 AI 智能线路规划等功能。
 
-  * Copy the entire directory containing your new plugin to the QGIS plugin
-    directory
+本项目围绕“通信基建工程数智化设计与交付关键技术”场景，探索如何在开源 GIS 平台 QGIS 上构建设计智能化工具，降低专业 GIS 软件使用门槛，提高通信工程设计效率与标准化水平。
 
-  * Compile the resources file using pyrcc5
+当前插件已实现从“参数输入”到“线路生成—设施布设—工程量统计—审查报告输出”的基本闭环，并正在逐步引入大模型能力，实现基于 AI 的智能线路规划和多厂商 API 配置。
 
-  * Run the tests (``make test``)
+---
 
-  * Test the plugin by enabling it in the QGIS plugin manager
+## 项目背景
 
-  * Customize it by editing the implementation file: ``fibergis_designer.py``
+在通信基建工程设计中，传统设计流程往往依赖 CAD 或通用绘图工具，存在以下问题：
 
-  * Create your own custom icon, replacing the default icon.png
+1. 设计人员需要手动绘制通信线路、基站、机房、人井等工程对象；
+2. 线路设计缺少自动化拓扑规划能力；
+3. 工程量统计和 BOM 编制依赖人工整理，效率较低；
+4. 设计成果与施工准备资料之间存在断点；
+5. 设计审查依赖人工经验，难以形成可计算、可复用的规则体系；
+6. QGIS 等专业 GIS 平台功能强大，但对通信工程设计人员来说使用门槛较高。
 
-  * Modify your user interface by opening FiberGISDesigner_dialog_base.ui in Qt Designer
+FiberGIS Designer 试图通过 QGIS 插件的形式，将通信工程设计流程转化为可参数化、可自动生成、可审查、可输出的智能化流程，为通信基建工程的数字化设计与交付提供原型验证。
 
-  * You can use the Makefile to compile your Ui and resource files when
-    you make changes. This requires GNU make (gmake)
+---
 
-For more information, see the PyQGIS Developer Cookbook at:
-http://www.qgis.org/pyqgis-cookbook/index.html
+## 核心功能
 
-(C) 2011-2018 GeoApt LLC - geoapt.com
+### 1. 参数化通信线路设计
+
+插件提供可视化参数输入界面，用户可以设置：
+
+* 起点名称
+* 终点名称
+* 光缆型号
+* 人井数量
+* 生成模式：传统模式 / AI 模式
+* AI 平台配置
+
+用户无需手动创建多个 QGIS 图层，只需填写基本设计参数，即可自动生成通信工程设计结果。
+
+---
+
+### 2. 自动生成通信节点
+
+插件可自动生成通信节点图层：
+
+```text
+通信节点_demo
+```
+
+当前支持的节点类型包括：
+
+* 机房
+* 基站
+
+节点属性包括：
+
+* 节点名称
+* 节点类型
+* 状态信息
+
+---
+
+### 3. 自动生成通信线路
+
+插件可根据起点和终点自动生成通信线路图层：
+
+```text
+通信线路_demo
+```
+
+线路属性包括：
+
+* 线路名称
+* 光缆型号
+* 起点节点
+* 终点节点
+* 线路长度，单位为米
+
+在传统模式下，插件根据示例坐标生成通信线路。
+
+在 AI 模式下，插件会调用配置的大模型接口，尝试生成包含多个中间点的智能线路方案。
+
+---
+
+### 4. 自动布设通信设施
+
+插件可根据用户输入的人井数量，沿通信线路自动等比例布设人井点位，生成图层：
+
+```text
+通信设施_demo
+```
+
+设施属性包括：
+
+* 设施名称
+* 设施类型
+* 所属线路
+* 序号
+
+例如，当用户设置人井数量为 5 时，插件会自动生成：
+
+```text
+1号人井
+2号人井
+3号人井
+4号人井
+5号人井
+```
+
+---
+
+### 5. 自动计算线路长度
+
+插件基于 QGIS 的空间计算能力，自动计算通信线路长度，并将长度写入线路图层属性和输出报告中。
+
+当前输出示例：
+
+```text
+线路长度：1113.6 米
+```
+
+该功能可用于后续 BOM 统计、施工准备资料生成和设计效率验证。
+
+---
+
+### 6. BOM 自动导出
+
+插件可自动导出通信工程物料清单：
+
+```text
+output/bom_demo.csv
+```
+
+BOM 文件采用 `utf-8-sig` 编码，便于使用 Excel 打开中文内容。
+
+BOM 表头包括：
+
+```text
+物料名称,规格型号,单位,数量,计算依据
+```
+
+示例内容：
+
+```text
+光缆,48芯光缆,米,1113.6,A机房-B基站光缆长度自动计算
+通信节点,机房,个,1,A机房
+通信节点,基站,个,1,B基站
+人井,标准人井,个,5,沿线路自动布设
+```
+
+该功能对应通信工程中“设计成果向施工准备资料自动转化”的需求。
+
+---
+
+### 7. 基础设计审查报告导出
+
+插件可自动生成基础设计审查报告：
+
+```text
+output/risk_report_demo.csv
+```
+
+审查内容包括：
+
+* 起点完整性检查
+* 终点完整性检查
+* 线路完整性检查
+* 人井布设检查
+* BOM 生成检查
+
+审查报告表头包括：
+
+```text
+审查项,规则说明,审查结果,风险等级,整改建议
+```
+
+同时，插件会在 QGIS 中生成审查结果图层：
+
+```text
+设计审查_demo
+```
+
+用于在地图中展示审查结果。
+
+---
+
+### 8. AI 智能线路规划
+
+插件已引入 AI 模式，支持通过大模型生成智能线路点序列。
+
+AI 模式的目标是让大模型返回结构化 JSON，例如：
+
+```json
+{
+  "points": [
+    [114.3000, 30.6000],
+    [114.3030, 30.6020],
+    [114.3060, 30.6035],
+    [114.3100, 30.6050]
+  ],
+  "reason": "优先沿道路和空旷区域生成示例线路。",
+  "risk_notes": [
+    "需要结合实际道路、管线和红线数据复核。",
+    "当前结果仅用于智能辅助设计原型演示。"
+  ]
+}
+```
+
+插件解析 `points` 字段后，将其转化为 QGIS 折线图层，并继续完成：
+
+* 人井自动布设
+* 线路长度计算
+* BOM 导出
+* 审查报告生成
+
+---
+
+### 9. 多厂商 AI API 配置
+
+插件提供 AI 设置窗口，支持用户自定义不同 AI 平台配置。
+
+当前配置项包括：
+
+* 平台名称
+* 基础 URL
+* API Key
+* API 路径
+* 模型名称
+* 请求 JSON
+
+配置会保存到本地文件：
+
+```text
+ai_configs.json
+```
+
+示例配置：
+
+```json
+{
+  "name": "DeepSeek",
+  "base_url": "https://api.deepseek.com",
+  "api_key": "YOUR_API_KEY",
+  "endpoint": "/chat/completions",
+  "model": "deepseek-chat",
+  "request_json": {
+    "temperature": 0.1,
+    "max_tokens": 1000,
+    "response_format": {
+      "type": "json_object"
+    }
+  }
+}
+```
+
+> 注意：请勿将真实 API Key 提交到公开 GitHub 仓库。
+
+---
+
+## 当前开发进度
+
+### V1：通信节点与通信线路生成
+
+* 实现 QGIS 插件骨架；
+* 点击插件按钮后自动生成通信节点图层和通信线路图层；
+* 支持基础地图可视化展示。
+
+### V2：自动布设人井
+
+* 沿线路自动生成指定数量的人井；
+* 新增通信设施图层；
+* 人井点位自动写入属性表。
+
+### V3：BOM 自动导出
+
+* 自动生成 `bom_demo.csv`；
+* 统计光缆、通信节点、人井等工程量；
+* 初步实现设计成果向施工准备资料转化。
+
+### V4：基础审查报告
+
+* 自动生成 `risk_report_demo.csv`；
+* 新增设计审查图层；
+* 支持基础规则审查结果输出。
+
+### V5：参数化输入界面
+
+* 新增起点名称、终点名称、光缆型号、人井数量输入；
+* 插件由固定 demo 升级为可参数化原型系统。
+
+### V6：长度计算与参数联动
+
+* 支持线路长度米制计算；
+* BOM 与审查报告使用用户输入参数；
+* 弹窗显示线路长度、BOM 路径和审查报告路径。
+
+### V6.1：AI 模式与多厂商配置
+
+* 新增传统模式 / AI 模式；
+* 新增 AI 设置窗口；
+* 支持 DeepSeek 等 Chat Completions 兼容接口；
+* 支持 AI 返回点序列后生成智能线路；
+* 支持 AI 调用失败日志输出；
+* 保留传统线路生成作为回退方案。
+
+---
+
+## 项目结构
+
+```text
+fibergis_designer/
+├── __init__.py
+├── fibergis_designer.py
+├── fibergis_designer_dialog.py
+├── fibergis_designer_dialog_base.ui
+├── metadata.txt
+├── resources.py
+├── resources.qrc
+├── icon.png
+├── README.md
+├── README.html
+├── README.txt
+├── .gitignore
+├── ai_configs.json              # 本地 AI 配置文件，建议不要提交真实 Key
+├── output/
+│   ├── bom_demo.csv
+│   ├── risk_report_demo.csv
+│   └── ai_error.log
+└── scripts/
+    ├── compile-strings.sh
+    ├── run-env-linux.sh
+    └── update-strings.sh
+```
+
+---
+
+## 安装与使用
+
+### 1. 环境要求
+
+推荐环境：
+
+```text
+QGIS 3.44.10 或 QGIS 3.x
+Python 3.x
+Windows 10 / Windows 11
+```
+
+插件基于 PyQGIS 开发，不需要编译 QGIS 源码。
+
+---
+
+### 2. 安装插件
+
+将插件目录放入 QGIS 用户插件目录：
+
+```text
+C:\Users\<用户名>\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\
+```
+
+目录结构应为：
+
+```text
+plugins/
+└── fibergis_designer/
+    ├── metadata.txt
+    ├── __init__.py
+    ├── fibergis_designer.py
+    └── ...
+```
+
+---
+
+### 3. 启用插件
+
+打开 QGIS：
+
+```text
+插件 → 管理并安装插件 → 已安装
+```
+
+搜索：
+
+```text
+FiberGIS Designer
+```
+
+勾选启用。
+
+---
+
+### 4. 使用插件
+
+启用后，在 QGIS 工具栏或插件菜单中点击 FiberGIS Designer。
+
+填写参数：
+
+```text
+起点名称：A机房
+终点名称：B基站
+光缆型号：48芯光缆
+人井数量：5
+生成模式：传统模式 / AI模式
+```
+
+点击 `OK` 后，插件会自动生成：
+
+```text
+通信节点_demo
+通信线路_demo
+通信设施_demo
+设计审查_demo
+```
+
+并导出：
+
+```text
+output/bom_demo.csv
+output/risk_report_demo.csv
+```
+
+---
+
+## AI 配置说明
+
+### DeepSeek 示例配置
+
+在 AI 设置窗口中新增平台：
+
+```text
+平台名称：DeepSeek
+基础 URL：https://api.deepseek.com
+API 路径：/chat/completions
+模型名称：deepseek-chat
+API Key：你的 DeepSeek API Key
+```
+
+请求 JSON：
+
+```json
+{
+  "temperature": 0.1,
+  "max_tokens": 1000,
+  "response_format": {
+    "type": "json_object"
+  }
+}
+```
+
+保存配置后，回到主界面选择：
+
+```text
+AI模式
+AI平台：DeepSeek
+```
+
+点击 `OK` 即可尝试调用 DeepSeek 生成线路点序列。
+
+---
+
+## 输出文件说明
+
+### BOM 文件
+
+路径：
+
+```text
+output/bom_demo.csv
+```
+
+用途：
+
+* 展示光缆长度；
+* 展示通信节点数量；
+* 展示人井数量；
+* 支撑施工准备资料自动生成。
+
+---
+
+### 审查报告
+
+路径：
+
+```text
+output/risk_report_demo.csv
+```
+
+用途：
+
+* 展示基础规则审查结果；
+* 支撑设计智能审查功能；
+* 为后续风险区穿越、资源冲突、安全距离检查等功能扩展提供基础。
+
+---
+
+### AI 错误日志
+
+路径：
+
+```text
+output/ai_error.log
+```
+
+用途：
+
+* 记录 AI 调用失败原因；
+* 记录 HTTP 状态码、响应文本和异常信息；
+* 便于排查 API Key、请求地址、模型名称、网络连接等问题。
+
+---
+
+## 技术路线
+
+本项目采用以下技术路线：
+
+```text
+QGIS 插件界面
+    ↓
+用户参数输入
+    ↓
+传统模式 / AI 模式选择
+    ↓
+生成通信线路、节点、人井
+    ↓
+计算线路长度
+    ↓
+导出 BOM
+    ↓
+生成设计审查报告
+    ↓
+QGIS 地图可视化展示
+```
+
+AI 模式技术流程：
+
+```text
+用户参数输入
+    ↓
+读取 AI 平台配置
+    ↓
+构造 Chat Completions 请求
+    ↓
+大模型返回 JSON 点序列
+    ↓
+解析 points
+    ↓
+生成 QGIS 折线图层
+    ↓
+自动布设人井
+    ↓
+导出 BOM 与审查报告
+```
+
+---
+
+## 创新点
+
+### 1. 基于 QGIS 的通信工程参数化设计
+
+插件将通信线路、机房、基站、人井等对象封装为参数化生成流程，减少用户手动绘图操作，提高设计效率。
+
+### 2. 设计成果与施工资料自动衔接
+
+插件在生成设计图层后自动导出 BOM，实现从设计结果到施工准备资料的初步自动转化。
+
+### 3. 自动化设计审查雏形
+
+插件将起点、终点、线路、人井、BOM 等基础审查规则转化为可计算逻辑，并输出审查报告和审查图层。
+
+### 4. 多厂商大模型接口配置
+
+插件支持用户配置不同 AI 平台，通过 Chat Completions 兼容接口接入大模型，具备较强扩展性。
+
+### 5. AI 线路规划原型
+
+插件支持由大模型返回线路点序列，并将 AI 结果转化为 QGIS 空间图层，为后续结合道路、水体、建筑物、风险区等约束进行智能路径规划打下基础。
+
+---
+
+## 后续计划
+
+### 1. 地图约束智能规划
+
+引入道路、水体、建筑物、禁挖区等图层，将地图环境约束传递给 AI 或路径算法，实现更符合实际工程场景的线路规划。
+
+### 2. 风险区穿越审查
+
+增加风险区图层，自动检查通信线路是否穿越河流、水体、高压线、禁挖区、建筑密集区等对象。
+
+### 3. 道路优先路径规划
+
+结合 QGIS 路网数据，基于 Dijkstra 或 A* 算法实现沿道路/管道/杆路的线路规划。
+
+### 4. 多方案对比
+
+支持生成多条候选线路，对比线路长度、风险点数量、施工难度和工程量。
+
+### 5. 施工任务单输出
+
+在 BOM 基础上进一步生成施工任务清单，包括施工顺序、设施点位、施工说明和风险提示。
+
+### 6. 验证报告与对比实验
+
+构建人工设计与插件设计的对比实验，量化验证：
+
+* 设计效率提升；
+* 手动绘图操作减少；
+* BOM 编制时间缩短；
+* 规则审查覆盖率；
+* 风险识别准确率。
+
+---
+
+## 安全说明
+
+请勿将真实 API Key 提交到公开仓库。
+
+建议将以下文件加入 `.gitignore`：
+
+```gitignore
+ai_configs.json
+output/ai_error.log
+__pycache__/
+*.pyc
+```
+
+如需展示 AI 配置，可提供脱敏示例文件：
+
+```text
+ai_configs.example.json
+```
+
+---
+
+## 开发命令
+
+查看当前修改：
+
+```bash
+git status
+```
+
+提交修改：
+
+```bash
+git add .
+git commit -m "Update FiberGIS Designer"
+```
+
+推送到 GitHub：
+
+```bash
+git push
+```
+
+---
+
+## 适用场景
+
+FiberGIS Designer 可用于以下场景的原型验证：
+
+* 通信线路辅助设计；
+* 基站接入线路规划；
+* 机房到基站的光缆设计；
+* 通信人井/手孔自动布设；
+* 通信工程 BOM 自动生成；
+* 通信设计基础审查；
+* 基于 AI 的 GIS 智能设计流程探索。
+
+---
+
+## 项目状态
+
+当前项目仍处于原型开发阶段，主要用于比赛作品、技术验证和教学研究。
+
+当前实现重点：
+
+```text
+可运行插件原型
+参数化通信线路设计
+BOM 自动导出
+基础审查报告
+AI 智能线路规划原型
+多厂商 API 配置管理
+```
+
+后续将继续完善真实工程数据接入、地图约束规划、风险审查和验证报告。
+
+---
+
+## License
+
+本项目当前用于课程、科研和竞赛原型开发。正式开源协议待后续确定。
+
+---
+
+## 作者
+
+项目名称：
+
+```text
+FiberGIS Designer
+```
+
+开发方向：
+
+```text
+基于 QGIS 的通信基建工程智能辅助设计插件
+```
+
+主要技术：
+
+```text
+QGIS / PyQGIS / Python / AI API / GIS 空间分析
+```
